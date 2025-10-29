@@ -1,0 +1,28 @@
+struct Customer {
+    char username[30];   // 用户名
+    char phone[20];      // 电话号
+    float balance;       // 账户余额
+    int orderCount;      // 历史订单数量
+};
+struct Order {
+    char username[30];
+    char coffeeName[30];
+    float totalPrice;
+    char date[20];
+};
+struct Coffee {
+    char name[30];
+    float base_price;   // 基础价格
+    float bean_price;   // 咖啡豆价格
+    float milk_price;   // 牛奶附加价
+    float extra_shot;   // 额外浓缩附加价
+};
+struct Coffee coffees[50];// 结构体数组，存储所有咖啡种类
+struct Customer customers[100];// 结构体数组，存储顾客信息
+struct Order orders[500];
+int coffeeCount;// int类型，当前咖啡数量 结构体数组，保存订单记录
+int customerCount;// int类型，当前顾客数量
+int orderCount;// int类型，当前订单数量
+float totalPrice;// float类型，当前订单总价
+int choice;// int类型，菜单选择项
+char input[50];// char数组，用户输入
