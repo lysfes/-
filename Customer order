@@ -1,0 +1,365 @@
+#ifndef CUSTOMER_H
+#define CUSTOMER_H
+
+#include <stdbool.h>
+
+#define MAX_ORDER_ITEMS 10
+#define MAX_HISTORY 50
+#define MAX_NAME_LEN 50
+#define MAX_PHONE_LEN 20
+
+/* 简单的枚举，用于表示冷热 */
+typedef enum { HOT = 0, ICED = 1 } TempType;
+
+/* 单杯饮料订单项 */
+typedef struct {
+    int drink_id;        /* 菜单中饮品编号（由管理模块定义） */
+    int bean_id;         /* 豆子类型编号（由管理模块定义） */
+    int milk_id;         /* 牛奶类型编号（由管理模块定义） */
+    TempType temp;       /* 热/冰 */
+    int extra_shots;     /* 额外咖啡浓缩数 */
+    int sugars;          /* 糖数 */
+    double item_price;   /* 计算得到的该项价格（快照） */
+} OrderItem;
+
+/* 整笔订单（可能包含多杯） */
+typedef struct {
+    int order_id;                   /* 订单号（简单自增或由外部管理） */
+    OrderItem items[MAX_ORDER_ITEMS];
+    int item_count;
+    double total_price;
+} Order;
+
+/* 用户/顾客结构（简化版） */
+typedef struct {
+    int account_no;                  /* 唯一账号编号 */
+    char name[MAX_NAME_LEN];
+    char phone[MAX_PHONE_LEN];
+    double balance;                  /* 账户余额 */
+    Order history[MAX_HISTORY];      /* 订单历史 */
+    int history_count;
+} Customer;
+
+/* 顾客模块对外接口（由本模块实现） */
+
+/* 1) 登录：通过账号号查找顾客（返回指针或 NULL）*/
+Customer* customer_login(int account_no);
+
+/* 2) 主点单函数：对某个已登录顾客进行点单（交互式，终端模式）*/
+bool customer_place_order(Customer* cust);
+
+/* 3) 辅助：把订单追加到顾客历史（返回是否成功）*/
+bool append_order_to_history(Customer* cust, const Order* order);
+
+/* 4) 生成订单ID（如果项目其它模块需要一致，可替换为外部函数）*/
+int generate_order_id(void);
+
+#endif /* CUSTOMER_H */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+/* ====== 注意 ======
+   以下变量/数据结构被声明为 extern，表示这些数据应由“管理者模块”或主程序在全局定义并初始化。
+   这些变量在整合到主项目时必须由 manager.c 或 main.c 提供：
+     - char* drink_names[]; int DRINK_COUNT;
+     - char* bean_names[];  int BEAN_COUNT;
+     - char* milk_names[];  int MILK_COUNT;
+     - double drink_prices[]; (length DRINK_COUNT)
+     - double bean_prices[];  (length BEAN_COUNT)  // 可为附加价或调整因子
+     - double milk_prices[];  (length MILK_COUNT)
+     - double extra_shot_price;
+     - double sugar_price;   // per sugar unit
+   我在文件底部列出“需要外部定义的变量清单”，方便你与组员核对。
+*/
+
+/* 菜单与价格（extern，必须在其他模块定义） */
+extern const char* drink_names[];    /* 例如 "Latte", "Mocha" */
+extern int DRINK_COUNT;
+
+extern const char* bean_names[];
+extern int BEAN_COUNT;
+
+extern const char* milk_names[];
+extern int MILK_COUNT;
+
+extern double drink_prices[]; /* 基本价格 */
+extern double bean_prices[];  /* 不同豆子可能有额外价格（可为0） */
+extern double milk_prices[];  /* 不同牛奶可能有额外价格（可为0） */
+
+extern double extra_shot_price;
+extern double sugar_price;
+
+/* 本模块维护的顾客数组（供测试使用）——在整合时可以把它改为 extern 并在主程序中定义 */
+#define LOCAL_CUSTOMER_CAP 20
+static Customer local_customers[LOCAL_CUSTOMER_CAP];
+static int local_customer_count = 0;
+
+/* 一个简单的订单号生成（模块局部自增） */
+static int order_id_counter = 1000;
+int generate_order_id(void) {
+    return order_id_counter++;
+}
+
+/* 在本地数组中查找账号（用于测试/示例） */
+Customer* customer_login(int account_no) {
+    for (int i = 0; i < local_customer_count; ++i) {
+        if (local_customers[i].account_no == account_no) {
+            return &local_customers[i];
+        }
+    }
+    return NULL;
+}
+
+/* 将订单追加到顾客历史 */
+bool append_order_to_history(Customer* cust, const Order* order) {
+    if (!cust || !order) return false;
+    if (cust->history_count >= MAX_HISTORY) return false;
+    cust->history[cust->history_count++] = *order; /* 结构体拷贝（快照）*/
+    return true;
+    }
+
+/* 计算一杯的价格（基于 extern 的价格数据） */
+static double compute_orderitem_price(const OrderItem* it) {
+    if (!it) return 0.0;
+    double price = 0.0;
+    if (it->drink_id >= 0 && it->drink_id < DRINK_COUNT) {
+        price += drink_prices[it->drink_id];
+    }
+    if (it->bean_id >= 0 && it->bean_id < BEAN_COUNT) {
+        price += bean_prices[it->bean_id];
+    }
+    if (it->milk_id >= 0 && it->milk_id < MILK_COUNT) {
+        price += milk_prices[it->milk_id];
+    }
+    /* extra shots */
+    if (it->extra_shots > 0) {
+        price += it->extra_shots * extra_shot_price;
+    }
+    /* sugars */
+    if (it->sugars > 0) {
+        price += it->sugars * sugar_price;
+    }
+    return price;
+}
+
+/* 显示菜单的小工具（简洁版）*/
+static void show_menu_options(void) {
+    printf("\n===== Menu =====\n");
+    for (int i = 0; i < DRINK_COUNT; ++i) {
+        printf("%d) %s - %.2f\n", i, drink_names[i], drink_prices[i]);
+    }
+    printf("================\n");
+}
+
+/* 以下函数是交互式的，方便在终端里测试和演示。若要在 GUI 或其它界面调用，可替换输入输出逻辑。*/
+
+bool customer_place_order(Customer* cust) {
+    if (!cust) {
+        printf("Error: customer_place_order called with NULL customer.\n");
+        return false;
+    }
+
+    Order order;
+    order.order_id = generate_order_id();
+    order.item_count = 0;
+    order.total_price = 0.0;
+
+    printf("\nWelcome %s! Starting order (account: %d). Current balance: %.2f\n",
+           cust->name, cust->account_no, cust->balance);
+
+    while (1) {
+        if (order.item_count >= MAX_ORDER_ITEMS) {
+            printf("Reached max items per order (%d).\n", MAX_ORDER_ITEMS);
+            break;
+        }
+        show_menu_options();
+        printf("Enter drink id to add (or -1 to finish): ");
+        int d;
+        if (scanf("%d", &d) != 1) { /* 保证输入合法 */
+            while (getchar() != '\n'); /* 清输入缓冲 */
+            printf("Invalid input. Try again.\n");
+            continue;
+        }
+        if (d == -1) break;
+        if (d < 0 || d >= DRINK_COUNT) {
+            printf("Invalid drink id.\n");
+            continue;
+        }
+
+        OrderItem item;
+        item.drink_id = d;
+
+        /* 选择豆子 */
+        printf("Choose bean type:\n");
+        for (int i = 0; i < BEAN_COUNT; ++i) {
+            printf("%d) %s (%.2f)\n", i, bean_names[i], bean_prices[i]);
+        }
+        printf("bean id: ");
+        int b;
+        if (scanf("%d", &b) != 1 || b < 0 || b >= BEAN_COUNT) {
+            while (getchar() != '\n');
+            printf("Invalid bean selection, defaulting to 0.\n");
+            b = 0;
+        }
+        item.bean_id = b;
+
+        /* 选择牛奶 */
+        printf("Choose milk type:\n");
+        for (int i = 0; i < MILK_COUNT; ++i) {
+            printf("%d) %s (%.2f)\n", i, milk_names[i], milk_prices[i]);
+        }
+        printf("milk id: ");
+        int m;
+        if (scanf("%d", &m) != 1 || m < 0 || m >= MILK_COUNT) {
+            while (getchar() != '\n');
+            printf("Invalid milk selection, defaulting to 0.\n");
+            m = 0;
+        }
+        item.milk_id = m;
+
+        /* 温度 */
+        printf("Temperature: 0)Hot  1)Iced : ");
+        int t;
+        if (scanf("%d", &t) != 1 || (t != 0 && t != 1)) {
+            while (getchar() != '\n');
+            printf("Invalid temp, default HOT.\n");
+            t = 0;
+            }
+        item.temp = (t == 0) ? HOT : ICED;
+
+        /* extra shots */
+        printf("Extra shots (0-3): ");
+        int s;
+        if (scanf("%d", &s) != 1 || s < 0 || s > 3) {
+            while (getchar() != '\n');
+            printf("Invalid input, default 0.\n");
+            s = 0;
+        }
+        item.extra_shots = s;
+
+        /* sugars */
+        printf("Number of sugars (0-5): ");
+        int su;
+        if (scanf("%d", &su) != 1 || su < 0 || su > 5) {
+            while (getchar() != '\n');
+            printf("Invalid input, default 0.\n");
+            su = 0;
+        }
+        item.sugars = su;
+
+        /* 计算该项价格并加入订单 */
+        item.item_price = compute_orderitem_price(&item);
+        order.items[order.item_count++] = item;
+        order.total_price += item.item_price;
+        printf("Added %s (item price: %.2f). Current order total: %.2f\n",
+               drink_names[item.drink_id], item.item_price, order.total_price);
+
+        /* 继续点单或完成 */
+        printf("Add more? y/n: ");
+        char ch;
+        while (getchar() != '\n'); /* 清除行尾 */
+        ch = getchar();
+        if (ch == 'n' || ch == 'N') break;
+        /* 继续循环 */
+    }
+
+    if (order.item_count == 0) {
+        printf("No items ordered. Exiting.\n");
+        return false;
+    }
+
+    printf("\nFinal order total: %.2f\n", order.total_price);
+    if (cust->balance < order.total_price) {
+        printf("Insufficient balance (%.2f). Please deposit money first.\n", cust->balance);
+        return false;
+    }
+
+    /* 扣款并保存历史 */
+    cust->balance -= order.total_price;
+    if (!append_order_to_history(cust, &order)) {
+        printf("Failed to save order to history.\n");
+        return false;
+    }
+
+    printf("Order completed! New balance: %.2f. Order id: %d\n", cust->balance, order.order_id);
+    return true;
+}
+
+/* ====== 本地测试辅助函数（可删） ====== */
+
+/* 添加一个测试顾客（仅用于模块内部快速测试） */
+void _add_test_customer(int acc, const char* name, const char* phone, double bal) {
+    if (local_customer_count >= LOCAL_CUSTOMER_CAP) return;
+    Customer* c = &local_customers[local_customer_count++];
+    c->account_no = acc;
+    strncpy(c->name, name, MAX_NAME_LEN-1); c->name[MAX_NAME_LEN-1] = '\0';
+    strncpy(c->phone, phone, MAX_PHONE_LEN-1); c->phone[MAX_PHONE_LEN-1] = '\0';
+    c->balance = bal;
+    c->history_count = 0;
+}
+
+/* 导出一些符号供调试（仅当本文件直接编译测试时使用） */
+#ifdef CUSTOMER_MODULE_TEST
+/* 在 main 中做小测试 */
+#endif
+
+/* ====== 需要外部定义的变量清单（供整合时与组员核对） ======
+   const char* drink_names[];  int DRINK_COUNT;
+   const char* bean_names[];   int BEAN_COUNT;
+   const char* milk_names[];   int MILK_COUNT;
+   double drink_prices[];      // length DRINK_COUNT
+   double bean_prices[];       // length BEAN_COUNT
+   double milk_prices[];       // length MILK_COUNT
+   double extra_shot_price;
+   double sugar_price;
+   （上面在 manager.c 或 main.c 中定义并初始化）
+   #include <stdio.h>
+#include "customer.h"
+*/
+/* 下面这些是本示例中提供的“管理者数据” —— 在完整项目中，这些应该由 manager.c 或 main.c 全局定义并初始化 */
+const char* drink_names[] = {"Latte", "Mocha", "Americano"};
+int DRINK_COUNT = 3;
+
+const char* bean_names[] = {"Regular", "Premium"};
+int BEAN_COUNT = 2;
+
+const char* milk_names[] = {"Whole", "Soy", "Almond"};
+int MILK_COUNT = 3;
+
+/* 价格数组（与上面的索引一一对应） */
+double drink_prices[] = {3.50, 4.00, 2.50};
+double bean_prices[] = {0.0, 0.5};    /* Premium 豆子加价 */
+double milk_prices[] = {0.0, 0.5, 0.7}; /* 不同牛奶加价 */
+
+double extra_shot_price = 0.75;
+double sugar_price = 0.10;
+
+/* 为了测试，声明 customer.c 中的添加测试顾客函数（如果你保留了） */
+extern void _add_test_customer(int acc, const char* name, const char* phone, double bal);
+
+int main(void) {
+    /* 添加示例顾客 */
+    _add_test_customer(1001, "Alice", "12345678", 20.0);
+    _add_test_customer(1002, "Bob", "87654321", 5.0);
+
+    printf("Enter your account number to login: ");
+    int acc;
+    if (scanf("%d", &acc) != 1) return 0;
+
+    Customer* c = customer_login(acc);
+    if (!c) {
+        printf("Account not found.\n");
+        return 0;
+    }
+
+    /* 调用你负责的点单函数 */
+    bool ok = customer_place_order(c);
+    if (ok) {
+        printf("Order placed successfully.\n");
+    } else {
+        printf("Order not completed.\n");
+    }
+
+    return 0;
+}
