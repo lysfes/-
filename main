@@ -1,4 +1,821 @@
-#include<stdio.h>
-int main(){
-  return 0;
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
+
+// Structure definition - Added password field
+typedef struct {
+    char  username[30];   // Username
+    char  phone[20];      // Phone number
+    char  password[20];   // Added: Payment password (max 19 characters, 1 for null terminator)
+    float balance;        // Balance (CNY)
+    int   orderCount;     // Number of orders
+} Customer;
+
+typedef struct {
+    char name[30];        // Coffee name
+    float base_price;     // Base price
+    float bean_price;     // Bean surcharge
+    float milk_price;     // Milk surcharge
+    float extra_shot;     // Extra shot surcharge
+} Coffee;
+
+typedef struct {
+    char username[30];    // Username of the customer who placed the order
+    char coffeeName[30];  // Coffee name
+    char customization[100]; // Customization information
+    float totalPrice;     // Total price
+    char date[20];        // Date
+} Order;
+
+// Global variables
+#define MAX_CUSTOMERS 100
+#define MAX_COFFEES 50
+#define MAX_ORDERS 500
+
+Customer customers[MAX_CUSTOMERS];
+int customerCount = 0;
+
+Coffee coffees[MAX_COFFEES];
+int coffeeCount = 0;
+
+Order orders[MAX_ORDERS];
+int orderCount = 0;
+
+// Utility functions
+static void trim_newline(char *s) {
+    if(!s) return;
+    size_t n = strlen(s);
+    while(n > 0 && (s[n-1] == '\n' || s[n-1] == '\r')) {
+        s[--n] = 0;
+    }
+}
+
+static int read_line(const char *prompt, char *out, size_t cap) {
+    printf("%s", prompt);
+    fflush(stdout);
+    if(!fgets(out, (int)cap, stdin)) return 0;
+    trim_newline(out);
+    return 1;
+}
+
+static void press_enter(void) {
+    printf("\nPress Enter to continue...");
+    fflush(stdout);
+    char buf[8]; 
+    fgets(buf, sizeof(buf), stdin);
+}
+
+// File operation functions - Added password field read/write
+static int loadCustomers() {
+    FILE *fp = fopen("customers.txt", "r");
+    if(!fp) {
+        return -1; // Return error if file does not exist; empty data will be used
+    }
+
+    customerCount = 0;
+    Customer c;
+    // Added password field reading format: %19s (matches 19-character password)
+    while(fscanf(fp, "%29s|%19s|%19s|%f|%d\n", 
+                c.username, c.phone, c.password, &c.balance, &c.orderCount) == 5) {
+        if(customerCount < MAX_CUSTOMERS) {
+            customers[customerCount++] = c;
+        } else {
+            break;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int saveCustomers() {
+    FILE *fp = fopen("customers.txt", "w");
+    if(!fp) return -1;
+
+    // Added password field writing
+    for(int i = 0; i < customerCount; i++) {
+        fprintf(fp, "%s|%s|%s|%.2f|%d\n", 
+                customers[i].username,
+                customers[i].phone,
+                customers[i].password,  // Write password
+                customers[i].balance,
+                customers[i].orderCount);
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int loadCoffees() {
+    FILE *fp = fopen("coffees.txt", "r");
+    if(!fp) return -1;
+
+    coffeeCount = 0;
+    Coffee cf;
+    while(fscanf(fp, "%29s|%f|%f|%f|%f\n", 
+                cf.name, &cf.base_price, &cf.bean_price, 
+                cf.milk_price, &cf.extra_shot) == 5) {
+        if(coffeeCount < MAX_COFFEES) {
+            coffees[coffeeCount++] = cf;
+        } else {
+            break;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int saveCoffees() {
+    FILE *fp = fopen("coffees.txt", "w");
+    if(!fp) return -1;
+
+    for(int i = 0; i < coffeeCount; i++) {
+        fprintf(fp, "%s|%.2f|%.2f|%.2f|%.2f\n", 
+                coffees[i].name,
+                coffees[i].base_price,
+                coffees[i].bean_price,
+                coffees[i].milk_price,
+                coffees[i].extra_shot);
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int loadOrders() {
+    FILE *fp = fopen("orders.txt", "r");
+    if(!fp) return -1;
+
+    orderCount = 0;
+    Order o;
+    while(fscanf(fp, "%29s|%29s|%99s|%f|%19s\n", 
+                o.username, o.coffeeName, o.customization, 
+                &o.totalPrice, o.date) == 5) {
+        if(orderCount < MAX_ORDERS) {
+            orders[orderCount++] = o;
+        } else {
+            break;
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int saveOrders() {
+    FILE *fp = fopen("orders.txt", "w");
+    if(!fp) return -1;
+
+    for(int i = 0; i < orderCount; i++) {
+        fprintf(fp, "%s|%s|%s|%.2f|%s\n", 
+                orders[i].username,
+                orders[i].coffeeName,
+                orders[i].customization,
+                orders[i].totalPrice,
+                orders[i].date);
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int loadData() {
+    int ret = 0;
+    if(loadCustomers() != 0) ret = -1;
+    if(loadCoffees() != 0) ret = -1;
+    if(loadOrders() != 0) ret = -1;
+    return ret;
+}
+
+static int saveData() {
+    int ret = 0;
+    if(saveCustomers() != 0) ret = -1;
+    if(saveCoffees() != 0) ret = -1;
+    if(saveOrders() != 0) ret = -1;
+    return ret;
+}
+
+// Customer management functions - Added password-related logic
+static int getCustomerIndex(const char *username) {
+    for(int i = 0; i < customerCount; i++) {
+        if(strcmp(customers[i].username, username) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int getCustomerByName(const char *username, Customer *c) {
+    int idx = getCustomerIndex(username);
+    if(idx != -1) {
+        *c = customers[idx];
+        return 1;
+    }
+    return 0;
+}
+
+// Added: Verify customer password
+static int verifyCustomerPassword(const char *username, const char *password) {
+    int idx = getCustomerIndex(username);
+    if(idx == -1) return 0; // User does not exist
+    return strcmp(customers[idx].password, password) == 0;
+}
+
+// Added: Change customer password (return 0 for success, -1 for user not found, -2 for same old and new password, -3 for inconsistent new passwords)
+static int changeCustomerPassword(const char *username, const char *old_pwd, const char *new_pwd1, const char *new_pwd2) {
+    int idx = getCustomerIndex(username);
+    if(idx == -1) return -1;
+    
+    // Verify old password
+    if(strcmp(customers[idx].password, old_pwd) != 0) return -2;
+    
+    // Verify new passwords are consistent
+    if(strcmp(new_pwd1, new_pwd2) != 0) return -3;
+    
+    // Change password and save
+    strncpy(customers[idx].password, new_pwd1, 19);
+    saveCustomers();
+    return 0;
+}
+
+// Added: Manager resets customer password (no need for old password, directly set new password)
+static int resetCustomerPassword(const char *username, const char *new_pwd) {
+    int idx = getCustomerIndex(username);
+    if(idx == -1) return -1;
+    
+    strncpy(customers[idx].password, new_pwd, 19);
+    saveCustomers();
+    return 0;
+}
+
+// Modified: Added password parameter
+static int addCustomer(const char *username, const char *phone, const char *password, float balance, int role) {
+    if(customerCount >= MAX_CUSTOMERS) return -3;
+    if(getCustomerIndex(username) != -1) return -2;
+
+    strncpy(customers[customerCount].username, username, 29);
+    strncpy(customers[customerCount].phone, phone, 19);
+    strncpy(customers[customerCount].password, password, 19); // Store password
+    customers[customerCount].balance = balance;
+    customers[customerCount].orderCount = 0;
+    customerCount++;
+    saveCustomers();
+    return 0;
+}
+
+static int editCustomer(const char *username, const char *phone, float balance) {
+    int idx = getCustomerIndex(username);
+    if(idx == -1) return -1;
+
+    if(phone) strncpy(customers[idx].phone, phone, 19);
+    if(balance >= 0) customers[idx].balance = balance;
+    saveCustomers();
+    return 0;
+}
+
+static int removeCustomer(const char *username) {
+    int idx = getCustomerIndex(username);
+    if(idx == -1) return -1;
+
+    for(int i = idx; i < customerCount - 1; i++) {
+        customers[i] = customers[i + 1];
+    }
+    customerCount--;
+    saveCustomers();
+    return 0;
+}
+
+// Coffee management functions (no changes)
+static int getCoffeeIndex(const char *name) {
+    for(int i = 0; i < coffeeCount; i++) {
+        if(strcmp(coffees[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int addCoffee(const char *name, float base, float bean, float milk, float extra) {
+    if(coffeeCount >= MAX_COFFEES) return -3;
+    if(getCoffeeIndex(name) != -1) return -2;
+
+    strncpy(coffees[coffeeCount].name, name, 29);
+    coffees[coffeeCount].base_price = base;
+    coffees[coffeeCount].bean_price = bean;
+    coffees[coffeeCount].milk_price = milk;
+    coffees[coffeeCount].extra_shot = extra;
+    coffeeCount++;
+    saveCoffees();
+    return 0;
+}
+
+static int editCoffee(const char *name, float base, float bean, float milk, float extra) {
+    int idx = getCoffeeIndex(name);
+    if(idx == -1) return -1;
+
+    if(base >= 0) coffees[idx].base_price = base;
+    if(bean >= 0) coffees[idx].bean_price = bean;
+    if(milk >= 0) coffees[idx].milk_price = milk;
+    if(extra >= 0) coffees[idx].extra_shot = extra;
+    saveCoffees();
+    return 0;
+}
+
+static int removeCoffee(const char *name) {
+    int idx = getCoffeeIndex(name);
+    if(idx == -1) return -1;
+
+    for(int i = idx; i < coffeeCount - 1; i++) {
+        coffees[i] = coffees[i + 1];
+    }
+    coffeeCount--;
+    saveCoffees();
+    return 0;
+}
+
+// Order management functions (no changes)
+static void addOrder(const char *username, const char *coffeeName, 
+                   const char *custom, float price) {
+    if(orderCount >= MAX_ORDERS) return;
+
+    strncpy(orders[orderCount].username, username, 29);
+    strncpy(orders[orderCount].coffeeName, coffeeName, 29);
+    strncpy(orders[orderCount].customization, custom, 99);
+    orders[orderCount].totalPrice = price;
+
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    sprintf(orders[orderCount].date, "%04d-%02d-%02d %02d:%02d",
+            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+            tm->tm_hour, tm->tm_min);
+
+    orderCount++;
+    saveOrders();
+
+    int cidx = getCustomerIndex(username);
+    if(cidx != -1) {
+        customers[cidx].orderCount++;
+        customers[cidx].balance -= price;
+        saveCustomers();
+    }
+}
+
+// Login menu (no changes)
+static int loginMenu(void) {
+    for(;;) {
+        printf("\n=== Coffee Shop System Login ===\n");
+        printf("1) Manager Login\n");
+        printf("2) Customer Login\n");
+        printf("0) Exit System\n");
+        printf("Please select: ");
+        char buf[16];
+        if(!fgets(buf, sizeof(buf), stdin)) return 0;
+        int c = atoi(buf);
+        if(c == 0 || c == 1 || c == 2) return c;
+        puts("Invalid selection, please re-enter.");
+    }
+}
+
+// Customer registration process - Added password setting and confirmation
+static void register_flow(void) {
+    char u[30], p[20], pwd1[20], pwd2[20];
+    printf("\n=== Customer Registration ===\n");
+    
+    if(!read_line("Set username (letters/numbers/_/-): ", u, sizeof(u))) return;
+    if(!read_line("Phone number (digits/+): ", p, sizeof(p))) return;
+    
+    // Added: Set and confirm password
+    if(!read_line("Set payment password (max 19 characters): ", pwd1, sizeof(pwd1))) return;
+    if(!read_line("Confirm payment password: ", pwd2, sizeof(pwd2))) return;
+    
+    // Verify passwords match
+    if(strcmp(pwd1, pwd2) != 0) {
+        puts("Passwords do not match! Registration failed.");
+        press_enter();
+        return;
+    }
+    
+    int rc = addCustomer(u, p, pwd1, 0.0f, 0);
+    if(rc == 0) puts("Registration successful.");
+    else if(rc == -2) puts("Registration failed: Username already exists.");
+    else if(rc == -3) puts("Registration failed: Maximum number of users reached.");
+    else puts("Registration failed: Invalid input.");
+    press_enter();
+}
+
+// Manager menu functions - Added reset password option
+static void list_customers_ui(void) {
+    printf("\n=== All Users List ===\n");
+    printf("%-20s %-16s %-10s %-10s\n", "Username", "Phone", "Balance(CNY)", "Order Count");
+    printf("-------------------------------------------------------------\n");
+    for(int i = 0; i < customerCount; i++) {
+        printf("%-20s %-16s %-10.2f %-10d\n",
+               customers[i].username, 
+               customers[i].phone, 
+               customers[i].balance, 
+               customers[i].orderCount);
+    }
+}
+
+static void list_coffees_ui(void) {
+    printf("\n=== Coffee Menu List ===\n");
+    printf("%-20s %-10s %-10s %-10s %-10s\n", "Name", "Base Price", "Bean Surcharge", "Milk Surcharge", "Extra Shot Surcharge");
+    printf("------------------------------------------------------------------------\n");
+    for(int i = 0; i < coffeeCount; i++) {
+        printf("%-20s %-10.2f %-10.2f %-10.2f %-10.2f\n",
+               coffees[i].name,
+               coffees[i].base_price,
+               coffees[i].bean_price,
+               coffees[i].milk_price,
+               coffees[i].extra_shot);
+    }
+}
+
+static void manager_add_coffee_ui(void) {
+    char name[30];
+    char base_buf[20], bean_buf[20], milk_buf[20], extra_buf[20];
+    
+    if(!read_line("Coffee Name: ", name, sizeof(name))) return;
+    if(!read_line("Base Price: ", base_buf, sizeof(base_buf))) return;
+    if(!read_line("Bean Surcharge: ", bean_buf, sizeof(bean_buf))) return;
+    if(!read_line("Milk Surcharge: ", milk_buf, sizeof(milk_buf))) return;
+    if(!read_line("Extra Shot Surcharge: ", extra_buf, sizeof(extra_buf))) return;
+    
+    float base = atof(base_buf);
+    float bean = atof(bean_buf);
+    float milk = atof(milk_buf);
+    float extra = atof(extra_buf);
+    
+    int rc = addCoffee(name, base, bean, milk, extra);
+    if(rc == 0) puts("Addition successful.");
+    else if(rc == -2) puts("Failed: Coffee already exists.");
+    else if(rc == -3) puts("Failed: Menu is full.");
+    else puts("Failed: Invalid input.");
+}
+
+static void manager_edit_coffee_ui(void) {
+    char name[30];
+    char base_buf[20], bean_buf[20], milk_buf[20], extra_buf[20];
+    
+    if(!read_line("Name of coffee to modify: ", name, sizeof(name))) return;
+    if(getCoffeeIndex(name) == -1) {
+        puts("Coffee does not exist.");
+        return;
+    }
+    
+    if(!read_line("New Base Price (press Enter to keep current): ", base_buf, sizeof(base_buf))) return;
+    if(!read_line("New Bean Surcharge (press Enter to keep current): ", bean_buf, sizeof(bean_buf))) return;
+    if(!read_line("New Milk Surcharge (press Enter to keep current): ", milk_buf, sizeof(milk_buf))) return;
+    if(!read_line("New Extra Shot Surcharge (press Enter to keep current): ", extra_buf, sizeof(extra_buf))) return;
+    
+    float base = (base_buf[0] ? atof(base_buf) : -1);
+    float bean = (bean_buf[0] ? atof(bean_buf) : -1);
+    float milk = (milk_buf[0] ? atof(milk_buf) : -1);
+    float extra = (extra_buf[0] ? atof(extra_buf) : -1);
+    
+    int rc = editCoffee(name, base, bean, milk, extra);
+    if(rc == 0) puts("Modification successful.");
+    else puts("Modification failed.");
+}
+
+static void manager_remove_coffee_ui(void) {
+    char name[30];
+    if(!read_line("Name of coffee to delete: ", name, sizeof(name))) return;
+    
+    int rc = removeCoffee(name);
+    if(rc == 0) puts("Deletion successful.");
+    else puts("Deletion failed: Coffee does not exist.");
+}
+
+static void sales_statistics_ui(void) {
+    printf("\n=== Sales Statistics ===\n");
+    printf("1. Total Sales Amount: %.2f CNY\n", 
+           [&](){float sum=0; for(int i=0;i<orderCount;i++) sum+=orders[i].totalPrice; return sum;}());
+    
+    printf("\n2. Sales Status of Each Coffee:\n");
+    for(int i=0;i<coffeeCount;i++){
+        int cnt=0;
+        float sum=0;
+        for(int j=0;j<orderCount;j++){
+            if(strcmp(orders[j].coffeeName, coffees[i].name)==0){
+                cnt++;
+                sum+=orders[j].totalPrice;
+            }
+        }
+        printf("   %-20s Sales Quantity: %d  Sales Amount: %.2f CNY\n", coffees[i].name, cnt, sum);
+    }
+}
+
+// Added: Manager reset user password UI
+static void manager_reset_password_ui(void) {
+    char username[30], new_pwd[20];
+    printf("\n=== Reset Customer Password ===\n");
+    
+    if(!read_line("Enter customer username: ", username, sizeof(username))) return;
+    if(getCustomerIndex(username) == -1) {
+        puts("User does not exist!");
+        return;
+    }
+    
+    if(!read_line("Enter new payment password: ", new_pwd, sizeof(new_pwd))) return;
+    
+    int rc = resetCustomerPassword(username, new_pwd);
+    if(rc == 0) puts("Password reset successful!");
+    else puts("Password reset failed!");
+}
+
+// Modified: Added "Reset Customer Password" option (number 10) to manager menu
+static void managerMenu(void) {
+    for(;;) {
+        printf("\n=== Manager Menu ===\n");
+        printf("1) View All Users\n");
+        printf("2) Add User\n");
+        printf("3) Modify User (Phone/Balance)\n");
+        printf("4) Delete User\n");
+        printf("5) View Coffee Menu\n");
+        printf("6) Add Coffee\n");
+        printf("7) Modify Coffee Prices\n");
+        printf("8) Delete Coffee\n");
+        printf("9) View Sales Statistics\n");
+        printf("10) Reset Customer Password\n"); // Added option
+        printf("0) Return to Login Menu\n");
+        printf("Please select: ");
+        char buf[16]; 
+        if(!fgets(buf, sizeof(buf), stdin)) return;
+        int c = atoi(buf);
+        if(c == 0) return;
+        
+        switch(c) {
+            case 1: list_customers_ui(); break;
+            case 2: {
+                // Modified: Added initial password input
+                char u[30], p[20], pwd[20], mbuf[32];
+                if(!read_line("New Username: ", u, sizeof(u))) break;
+                if(!read_line("Phone Number: ", p, sizeof(p))) break;
+                if(!read_line("Initial Payment Password: ", pwd, sizeof(pwd))) break;
+                if(!read_line("Initial Balance: ", mbuf, sizeof(mbuf))) break;
+                float initBal = atof(mbuf);
+                int rc = addCustomer(u, p, pwd, initBal, 0);
+                if(rc==0) puts("Addition successful.");
+                else if(rc==-2) puts("Failed: Username already exists.");
+                else if(rc==-3) puts("Failed: Capacity is full.");
+                else puts("Failed: Invalid input.");
+                break;
+            }
+            case 3: {
+                char u[30], p[20], mbuf[32];
+                if(!read_line("Username to modify: ", u, sizeof(u))) break;
+                if(!read_line("New Phone (press Enter to keep current): ", p, sizeof(p))) break;
+                if(!read_line("New Balance: ", mbuf, sizeof(mbuf))) break;
+                float bal = atof(mbuf);
+                const char *np = (p[0] ? p : NULL);
+                int rc = editCustomer(u, np, bal);
+                if(rc==0) puts("Modification successful.");
+                else if(rc==-1) puts("Modification failed: User does not exist.");
+                else puts("Modification failed.");
+                break;
+            }
+            case 4: {
+                char u[30];
+                if(!read_line("Username to delete: ", u, sizeof(u))) break;
+                int rc = removeCustomer(u);
+                if(rc==0) puts("Deletion successful.");
+                else puts("Deletion failed: User does not exist.");
+                break;
+            }
+            case 5: list_coffees_ui(); break;
+            case 6: manager_add_coffee_ui(); break;
+            case 7: manager_edit_coffee_ui(); break;
+            case 8: manager_remove_coffee_ui(); break;
+            case 9: sales_statistics_ui(); break;
+            case 10: manager_reset_password_ui(); break; // Added case
+            default: puts("Invalid selection."); break;
+        }
+        press_enter();
+    }
+}
+
+// Customer menu functions - Added change password option
+static void customer_recharge_ui(const char *username) {
+    char buf[32];
+    if(!read_line("Please enter recharge amount: ", buf, sizeof(buf))) return;
+    float amount = atof(buf);
+    
+    if(amount <= 0) {
+        puts("Recharge amount must be a positive number.");
+        return;
+    }
+    
+    int idx = getCustomerIndex(username);
+    if(idx != -1) {
+        customers[idx].balance += amount;
+        saveCustomers();
+        printf("Recharge successful! Current Balance: %.2f CNY\n", customers[idx].balance);
+    } else {
+        puts("User does not exist.");
+    }
+}
+
+static void customer_order_ui(const char *username) {
+    if(coffeeCount == 0) {
+        puts("No coffee available for ordering.");
+        return;
+    }
+    
+    printf("\n=== Coffee Menu ===\n");
+    for(int i = 0; i < coffeeCount; i++) {
+        printf("%d) %s (Base Price: %.2f CNY)\n", 
+               i+1, coffees[i].name, coffees[i].base_price);
+    }
+    
+    char buf[16];
+    if(!read_line("Please select coffee (number): ", buf, sizeof(buf))) return;
+    int choice = atoi(buf) - 1;
+    if(choice < 0 || choice >= coffeeCount) {
+        puts("Invalid selection.");
+        return;
+    }
+    
+    Coffee selected = coffees[choice];
+    float total = selected.base_price;
+    char custom[100] = "";
+    
+    char bean_choice[16];
+    if(read_line("Do you need special coffee beans? (y/n): ", bean_choice, sizeof(bean_choice))) {
+        if(bean_choice[0] == 'y' || bean_choice[0] == 'Y') {
+            total += selected.bean_price;
+            strcat(custom, "Special Coffee Beans; ");
+        }
+    }
+    
+    char milk_choice[16];
+    if(read_line("Do you need special milk? (y/n): ", milk_choice, sizeof(milk_choice))) {
+        if(milk_choice[0] == 'y' || milk_choice[0] == 'Y') {
+            total += selected.milk_price;
+            strcat(custom, "Special Milk; ");
+        }
+    }
+    
+    char temp_choice[16];
+    if(read_line("Do you want iced drink? (y/n): ", temp_choice, sizeof(temp_choice))) {
+        strcat(custom, (temp_choice[0] == 'y' || temp_choice[0] == 'Y') ? "Iced; " : "Hot; ");
+    }
+    
+    char shot_choice[16];
+    if(read_line("Do you need extra espresso shot? (y/n): ", shot_choice, sizeof(shot_choice))) {
+        if(shot_choice[0] == 'y' || shot_choice[0] == 'Y') {
+            total += selected.extra_shot;
+            strcat(custom, "Extra Espresso Shot; ");
+        }
+    }
+    
+    printf("Your Order: %s, Customization: %s, Total Price: %.2f CNY\n", 
+           selected.name, custom, total);
+    
+    char confirm[16];
+    if(read_line("Confirm order? (y/n): ", confirm, sizeof(confirm))) {
+        if(confirm[0] == 'y' || confirm[0] == 'Y') {
+            int cidx = getCustomerIndex(username);
+            if(cidx == -1) {
+                puts("User does not exist.");
+                return;
+            }
+            
+            if(customers[cidx].balance < total) {
+                puts("Insufficient balance to place order.");
+                return;
+            }
+            
+            addOrder(username, selected.name, custom, total);
+            printf("Order placed successfully! Remaining Balance: %.2f CNY\n", customers[cidx].balance);
+        } else {
+            puts("Order cancelled.");
+        }
+    }
+}
+
+static void customer_view_orders_ui(const char *username) {
+    printf("\n=== Your Order History ===\n");
+    int count = 0;
+    for(int i = 0; i < orderCount; i++) {
+        if(strcmp(orders[i].username, username) == 0) {
+            printf("%d. Date: %s\n", ++count, orders[i].date);
+            printf("   Coffee: %s\n", orders[i].coffeeName);
+            printf("   Customization: %s\n", orders[i].customization);
+            printf("   Amount: %.2f CNY\n\n", orders[i].totalPrice);
+        }
+    }
+    if(count == 0) {
+        puts("No order records available.");
+    }
+}
+
+// Added: Customer change password UI
+static void customer_change_password_ui(const char *username) {
+    char old_pwd[20], new_pwd1[20], new_pwd2[20];
+    printf("\n=== Change Payment Password ===\n");
+    
+    if(!read_line("Enter old payment password: ", old_pwd, sizeof(old_pwd))) return;
+    if(!read_line("Enter new payment password: ", new_pwd1, sizeof(new_pwd1))) return;
+    if(!read_line("Confirm new payment password: ", new_pwd2, sizeof(new_pwd2))) return;
+    
+    int rc = changeCustomerPassword(username, old_pwd, new_pwd1, new_pwd2);
+    switch(rc) {
+        case 0: puts("Password changed successfully!"); break;
+        case -1: puts("Change failed: User does not exist."); break;
+        case -2: puts("Change failed: Incorrect old password."); break;
+        case -3: puts("Change failed: New passwords do not match."); break;
+        default: puts("Change failed: Unknown error."); break;
+    }
+}
+
+// Modified: Added "Change Payment Password" option (number 5) to customer menu
+static void customerMenu(const char *username) {
+    for(;;) {
+        Customer c;
+        if(!getCustomerByName(username, &c)) {
+            puts("User does not exist (may have been deleted).");
+            return;
+        }
+        
+        printf("\n=== Customer Center (%s) ===\n", username);
+        printf("Phone: %s\n", c.phone);
+        printf("Balance: %.2f CNY\n", c.balance);
+        printf("Historical Order Count: %d\n", c.orderCount);
+        
+        printf("\n1) View Information\n");
+        printf("2) Place Order\n");
+        printf("3) View Order History\n");
+        printf("4) Recharge Account\n");
+        printf("5) Change Payment Password\n"); // Added option
+        printf("0) Return to Login Menu\n");
+        printf("Please select: ");
+        
+        char buf[16]; 
+        if(!fgets(buf, sizeof(buf), stdin)) return;
+        int sel = atoi(buf);
+        
+        if(sel == 0) return;
+        switch(sel) {
+            case 1: break;
+            case 2: customer_order_ui(username); break;
+            case 3: customer_view_orders_ui(username); break;
+            case 4: customer_recharge_ui(username); break;
+            case 5: customer_change_password_ui(username); break; // Added case
+            default: puts("Invalid selection."); break;
+        }
+        press_enter();
+    }
+}
+
+// Main function - Added password verification for customer login
+int main(void) {
+    if(loadData() != 0) {
+        fprintf(stderr, "First run; new data files will be created.\n");
+    }
+
+    if(coffeeCount == 0) {
+        addCoffee("Latte", 32.0f, 5.0f, 3.0f, 6.0f);
+        addCoffee("Mocha", 35.0f, 5.0f, 3.0f, 6.0f);
+        addCoffee("Americano", 28.0f, 5.0f, 0.0f, 6.0f);
+    }
+
+    for(;;) {
+        int role = loginMenu();
+        if(role == 0) break;
+
+        if(role == 1) {
+            char pw[64];
+            read_line("Please enter manager password: ", pw, sizeof(pw));
+            if(strcmp(pw, "123456") != 0) {
+                puts("Incorrect password!");
+                continue;
+            }
+            managerMenu();
+        } else if(role == 2) {
+            printf("\n=== Customer Login ===\n");
+            char uname[30], pwd[20];
+            if(!read_line("Username: ", uname, sizeof(uname))) continue;
+            
+            // Added: Password verification
+            if(!read_line("Payment Password: ", pwd, sizeof(pwd))) continue;
+            
+            Customer c;
+            if(getCustomerByName(uname, &c)) {
+                // Verify password
+                if(verifyCustomerPassword(uname, pwd)) {
+                    customerMenu(uname);
+                } else {
+                    puts("Incorrect payment password! Please try again.");
+                }
+            } else {
+                printf("User does not exist. Do you want to register? (y/n): ");
+                char b[8]; 
+                fgets(b, sizeof(b), stdin);
+                if(b[0] == 'y' || b[0] == 'Y') {
+                    register_flow();
+                }
+            }
+        }
+    }
+
+    saveData();
+    puts("System exited.");
+    return 0;
 }
